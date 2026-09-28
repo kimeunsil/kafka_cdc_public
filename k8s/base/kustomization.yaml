@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - zookeeper.yaml
+  - kafka.yaml
+  - schema-registry.yaml
+  - connect.yaml
+
+configMapGenerator:
+  # 커넥터 선언은 이미지가 아닌 ConfigMap 으로 → 테이블 추가 시 이미지 재빌드 불필요.
+  # 이름에 해시를 붙이지 않아 ConfigMap 이 바뀌어도 Connect 파드가 재시작되지 않고,
+  # registrar 가 다음 주기에 변경분만 반영합니다.
+  - name: connectors
+    options:
+      disableNameSuffixHash: true
+    files:
+      - connectors/defaults.yaml
+      - connectors/sinks.yaml
+
+images:
+  - name: cdc-connect
+    newName: REGISTRY/cdc-connect
+    newTag: "1.4"
+  - name: cdc-registrar
+    newName: REGISTRY/cdc-registrar
+    newTag: "1.0.0"

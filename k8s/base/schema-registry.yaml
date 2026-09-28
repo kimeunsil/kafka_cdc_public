@@ -1,0 +1,42 @@
+# Based on the GoogleCloudPlatform Kafka-on-GKE sample manifests.
+# Copyright 2020 Google Inc. Licensed under the Apache License, Version 2.0
+# (http://www.apache.org/licenses/LICENSE-2.0). Modified by the repository author.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: schema-registry
+  labels: { app: schema-registry }
+spec:
+  ports:
+    - name: http
+      port: 8081
+  selector: { app: schema-registry }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schema-registry
+  labels: { app: schema-registry }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: schema-registry }
+  template:
+    metadata:
+      labels: { app: schema-registry }
+    spec:
+      containers:
+        - name: schema-registry
+          image: confluentinc/cp-schema-registry:6.1.0
+          env:
+            - name: SCHEMA_REGISTRY_HOST_NAME
+              valueFrom: { fieldRef: { fieldPath: status.podIP } }
+            - { name: SCHEMA_REGISTRY_LISTENERS, value: "http://0.0.0.0:8081" }
+            # ZooKeeper 기반 kafkastore.connection.url 은 deprecated → bootstrap servers 사용
+            - { name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS, value: "PLAINTEXT://kafka:9092" }
+          ports:
+            - { name: http, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /subjects, port: 8081 }
+            initialDelaySeconds: 15

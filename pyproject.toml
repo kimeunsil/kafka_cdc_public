@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["registrar", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["registrar", "fake_connect"]

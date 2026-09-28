@@ -1,0 +1,4 @@
+# Kafka Connect FileConfigProvider 가 읽는 파일
+#   local : secrets/mysql/mysql.properties 로 복사
+#   k8s   : kubectl create secret generic mysql-cred --from-file=mysql.properties=<이 파일>
+password=change-me

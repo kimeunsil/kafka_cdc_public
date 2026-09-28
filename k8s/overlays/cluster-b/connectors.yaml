@@ -1,0 +1,18 @@
+# cluster-b 의 소스 커넥터.
+# 두 클러스터가 같은 복제 DB 를 동시에 읽으므로 database.server.id 는 클러스터마다 달라야 합니다.
+sources:
+  - name: mysql-source-shop-b
+    config:
+      database.hostname: mysql-replica.example.internal
+      database.server.id: 184102
+      database.server.name: shopdb
+      database.include.list: shop
+      snapshot.mode: schema_only
+
+  - name: mysql-source-billing-b
+    config:
+      database.hostname: billing-replica.example.internal
+      database.server.id: 184112
+      database.server.name: billingdb
+      database.include.list: billing
+      snapshot.mode: schema_only

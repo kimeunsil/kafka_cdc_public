@@ -1,0 +1,53 @@
+# Based on the GoogleCloudPlatform Kafka-on-GKE sample manifests.
+# Copyright 2020 Google Inc. Licensed under the Apache License, Version 2.0
+# (http://www.apache.org/licenses/LICENSE-2.0). Modified by the repository author.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels: { app: kafka }
+spec:
+  clusterIP: None
+  ports:
+    - name: broker
+      port: 9092
+  selector: { app: kafka }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  labels: { app: kafka }
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels: { app: kafka }
+  template:
+    metadata:
+      labels: { app: kafka }
+    spec:
+      securityContext:
+        fsGroup: 1001
+      containers:
+        - name: kafka
+          image: debezium/kafka:1.4
+          env:
+            - { name: ZOOKEEPER_CONNECT, value: "zookeeper:2181" }
+            # JMX 노출 → 모니터링 에이전트(New Relic nri-kafka, Prometheus JMX exporter 등)가 수집
+            - { name: JMXHOST, value: "0.0.0.0" }
+            - { name: JMXPORT, value: "9010" }
+          ports:
+            - { name: broker, containerPort: 9092 }
+            - { name: jmx, containerPort: 9010 }
+          resources:
+            requests: { cpu: 250m, memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /kafka/data, subPath: data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: { storage: 20Gi }

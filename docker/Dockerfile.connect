@@ -1,0 +1,27 @@
+# Kafka Connect image = Debezium MySQL source + WePay BigQuery sink
+#
+#   docker build -f docker/Dockerfile.connect -t <REGISTRY>/cdc-connect:1.4 .
+#   docker push <REGISTRY>/cdc-connect:1.4
+#
+# 서드파티 jar를 저장소에 커밋하지 않고 빌드 시점에 내려받습니다.
+
+ARG DEBEZIUM_VERSION=1.4
+ARG BQ_CONNECTOR_VERSION=1.6.1
+
+# ── stage 1: BigQuery sink connector 다운로드/압축해제 ─────────
+FROM alpine:3.18 AS bq
+ARG BQ_CONNECTOR_VERSION
+RUN apk add --no-cache curl unzip \
+ && curl -fsSL -o /tmp/bq.zip \
+    "https://d1i4a15mxbxib1.cloudfront.net/api/plugins/wepay/kafka-connect-bigquery/versions/${BQ_CONNECTOR_VERSION}/wepay-kafka-connect-bigquery-${BQ_CONNECTOR_VERSION}.zip" \
+ && unzip -q /tmp/bq.zip -d /tmp \
+ && mv /tmp/wepay-kafka-connect-bigquery-${BQ_CONNECTOR_VERSION} /tmp/kafka-bq
+
+# ── stage 2: Debezium Connect ──────────────────────────────────
+FROM debezium/connect:${DEBEZIUM_VERSION}
+
+# BigQuery client가 사용하는 grpc 런타임
+RUN curl -fsSL -o /kafka/libs/grpc-netty-shaded-1.27.2.jar \
+    https://repo1.maven.org/maven2/io/grpc/grpc-netty-shaded/1.27.2/grpc-netty-shaded-1.27.2.jar
+
+COPY --from=bq /tmp/kafka-bq $KAFKA_CONNECT_PLUGINS_DIR/kafka-bq

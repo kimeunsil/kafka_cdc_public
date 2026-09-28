@@ -1,0 +1,13 @@
+# BigQuery 로 적재할 토픽(= 테이블) 목록. 토픽마다 커넥터 1개(bq-sink-<topic>)가 만들어집니다.
+sinks:
+  name_prefix: bq-sink-
+  config:
+    datasets: .*=${env:BQ_DATASET}
+  topics:
+    - customers
+    - orders
+    - products
+  overrides:
+    # 이벤트가 많은 테이블만 태스크를 늘리는 식으로 개별 조정
+    orders:
+      tasks.max: 2

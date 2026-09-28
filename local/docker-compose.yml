@@ -1,0 +1,70 @@
+# 로컬 검증용: MySQL(binlog) → Debezium → Kafka(Avro) 까지.
+# BigQuery 싱크는 secrets/gcp/credentials.json 을 넣으면 동일하게 등록 가능.
+#
+#   cd local && docker compose up -d --build
+#   (BigQuery 까지: GCP_PROJECT, BQ_DATASET 를 export 하고 REGISTRAR_ONLY= 로 비워서 실행)
+services:
+  mysql:
+    image: mysql:8.0
+    command: >
+      --server-id=1 --log-bin=mysql-bin --binlog-format=ROW
+      --binlog-row-image=FULL --gtid-mode=ON --enforce-gtid-consistency=ON
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: shop
+    ports: ["3306:3306"]
+    volumes:
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  zookeeper:
+    image: debezium/zookeeper:1.4
+
+  kafka:
+    image: debezium/kafka:1.4
+    depends_on: [zookeeper]
+    environment:
+      ZOOKEEPER_CONNECT: zookeeper:2181
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:6.1.0
+    depends_on: [kafka]
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+    ports: ["8081:8081"]
+
+  connect:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.connect
+    depends_on: [kafka, schema-registry, mysql]
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: cdc-connect
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_CONFIG_PROVIDERS: file
+      CONNECT_CONFIG_PROVIDERS_FILE_CLASS: org.apache.kafka.common.config.provider.FileConfigProvider
+    ports: ["8083:8083"]
+    volumes:
+      - ../secrets/mysql:/secrets/mysql:ro
+      - ../secrets/gcp:/secrets/gcp:ro
+
+  registrar:
+    build: ../registrar
+    depends_on: [connect]
+    command: ["reconcile", "--loop", "--interval", "30"]
+    environment:
+      CONNECT_URL: http://connect:8083
+      CONNECTORS_FILE: /config/connectors.yaml
+      REGISTRAR_ONLY: ${REGISTRAR_ONLY-source}   # 기본은 소스만 (GCP 없이 검증)
+      GCP_PROJECT: ${GCP_PROJECT:-}
+      BQ_DATASET: ${BQ_DATASET:-}
+    volumes:
+      - ../config/connectors.yaml:/config/connectors.yaml:ro

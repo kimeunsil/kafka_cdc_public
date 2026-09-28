@@ -1,0 +1,95 @@
+# Based on the GoogleCloudPlatform Kafka-on-GKE sample manifests.
+# Copyright 2020 Google Inc. Licensed under the Apache License, Version 2.0
+# (http://www.apache.org/licenses/LICENSE-2.0). Modified by the repository author.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: connect
+  labels: { app: connect }
+spec:
+  ports:
+    - name: rest
+      port: 8083
+  selector: { app: connect }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connect
+  labels: { app: connect }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: connect }
+  template:
+    metadata:
+      labels: { app: connect }
+    spec:
+      containers:
+        - name: connect
+          image: cdc-connect          # overlay 의 images 로 치환
+          env:
+            - { name: BOOTSTRAP_SERVERS, value: "kafka:9092" }
+            - { name: GROUP_ID, value: "cdc-connect" }
+            - { name: CONFIG_STORAGE_TOPIC, value: "connect_configs" }
+            - { name: OFFSET_STORAGE_TOPIC, value: "connect_offsets" }
+            - { name: STATUS_STORAGE_TOPIC, value: "connect_statuses" }
+            # Avro + Schema Registry: 소스 스키마 변경을 BigQuery 테이블 스키마로 자동 전파
+            - { name: KEY_CONVERTER, value: "io.confluent.connect.avro.AvroConverter" }
+            - { name: VALUE_CONVERTER, value: "io.confluent.connect.avro.AvroConverter" }
+            - { name: CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL, value: "http://schema-registry:8081" }
+            - { name: CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL, value: "http://schema-registry:8081" }
+            # 커넥터 설정에 비밀번호를 평문으로 넣지 않도록 FileConfigProvider 활성화
+            #   → "${file:/secrets/mysql/mysql.properties:password}" 형태로 참조
+            - { name: CONNECT_CONFIG_PROVIDERS, value: "file" }
+            - { name: CONNECT_CONFIG_PROVIDERS_FILE_CLASS, value: "org.apache.kafka.common.config.provider.FileConfigProvider" }
+            - { name: JMXHOST, value: "0.0.0.0" }
+            - { name: JMXPORT, value: "9010" }
+          ports:
+            - { name: rest, containerPort: 8083 }
+            - { name: jmx, containerPort: 9010 }
+          readinessProbe:
+            httpGet: { path: /connectors, port: 8083 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            # REST 워커 자체가 응답하지 않을 때만 재시작. 커넥터/태스크 장애는 registrar 가 처리
+            httpGet: { path: /connectors, port: 8083 }
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 500m, memory: 2Gi }
+          volumeMounts:
+            - { name: gcp-sa, mountPath: /secrets/gcp, readOnly: true }
+            - { name: mysql-cred, mountPath: /secrets/mysql, readOnly: true }
+
+        # ── registrar sidecar ──────────────────────────────────────────
+        # connectors ConfigMap(선언) ↔ Connect REST(실제 상태)를 주기적으로 맞추고,
+        # FAILED 태스크 재시작 + Slack 알림. 같은 파드라 localhost 로 접근.
+        - name: registrar
+          image: cdc-registrar
+          args: ["reconcile", "--loop"]
+          env:
+            - { name: CONNECT_URL, value: "http://localhost:8083" }
+            - { name: CONNECTORS_FILE, value: "/config/defaults.yaml,/config/sinks.yaml,/config/sources.yaml" }
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef: { name: slack-webhook, key: url, optional: true }
+          envFrom:
+            - configMapRef: { name: cdc-env }     # GCP_PROJECT, BQ_DATASET, CLUSTER_NAME
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 128Mi }
+          volumeMounts:
+            - { name: connectors, mountPath: /config, readOnly: true }
+      volumes:
+        - name: connectors
+          configMap: { name: connectors }
+        # kubectl create secret generic gcp-sa-key --from-file=credentials.json=<SA키.json>
+        - name: gcp-sa
+          secret: { secretName: gcp-sa-key }
+        # kubectl create secret generic mysql-cred --from-file=mysql.properties=secrets/mysql.properties
+        - name: mysql-cred
+          secret: { secretName: mysql-cred }

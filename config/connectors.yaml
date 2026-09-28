@@ -1,0 +1,65 @@
+# 커넥터 선언 파일 (로컬 docker compose 용)
+# registrar 가 이 파일을 기준으로 Kafka Connect 상태를 맞춥니다.
+#   ${env:NAME}  → registrar 가 환경변수로 치환
+#   ${file:...}  → Kafka Connect FileConfigProvider 가 런타임에 해석 (비밀번호)
+
+defaults:
+  source:
+    connector.class: io.debezium.connector.mysql.MySqlConnector
+    tasks.max: 1
+    database.port: 3306
+    database.user: debezium
+    database.password: ${file:/secrets/mysql/mysql.properties:password}
+    database.history.kafka.bootstrap.servers: kafka:9092
+    database.history.store.only.monitored.tables.ddl: true
+    database.history.skip.unparseable.ddl: true
+    database.history.kafka.recovery.poll.interval.ms: 50
+    database.history.kafka.recovery.attempts: 10
+    include.schema.changes: true
+    snapshot.mode: initial
+    snapshot.locking.mode: none
+    min.row.count.to.stream.results: 0
+    connect.timeout.ms: 30000
+    event.processing.failure.handling.mode: warn
+    inconsistent.schema.handling.mode: warn
+    errors.tolerance: all
+    errors.log.enable: true
+    errors.log.include.messages: true
+    errors.retry.delay.max.ms: 60000
+    errors.retry.timeout: 300000
+    # server.db.table → table  (토픽명 = 테이블명)
+    transforms: route
+    transforms.route.type: org.apache.kafka.connect.transforms.RegexRouter
+    transforms.route.regex: '([^.]+)\.([^.]+)\.([^.]+)'
+    transforms.route.replacement: '$3'
+
+  sink:
+    connector.class: com.wepay.kafka.connect.bigquery.BigQuerySinkConnector
+    tasks.max: 1
+    sanitizeTopics: true
+    autoCreateTables: true
+    autoUpdateSchemas: true
+    schemaRetriever: com.wepay.kafka.connect.bigquery.schemaregistry.schemaretriever.SchemaRegistrySchemaRetriever
+    schemaRegistryLocation: http://schema-registry:8081
+    bufferSize: 100000
+    maxWriteSize: 10000
+    tableWriteWait: 1000
+    project: ${env:GCP_PROJECT}
+    keyfile: /secrets/gcp/credentials.json
+
+sources:
+  - name: mysql-source-shop
+    config:
+      database.hostname: mysql
+      database.server.id: 184054        # 같은 MySQL 에 붙는 커넥터끼리 유일해야 함
+      database.server.name: shopdb
+      database.include.list: shop
+
+sinks:
+  name_prefix: bq-sink-
+  config:
+    datasets: .*=${env:BQ_DATASET}
+  topics:
+    - customers
+    - orders
+    - products
