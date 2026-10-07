@@ -1,9 +1,8 @@
 # MySQL CDC → Kafka → BigQuery on Kubernetes
 
 Debezium 으로 MySQL binlog 를 읽어 Kafka 에 변경 이벤트를 발행하고, BigQuery Sink Connector 로
-분석 DW(BigQuery)에 실시간 적재하는 파이프라인입니다. GKE 두 개 클러스터에서 여러 서비스 DB 의
-수백 개 테이블을 운영했던 구성을 공개용으로 재정리했습니다.
-(회사 고유 정보·인증정보는 모두 제거하고 가상의 샘플 스키마로 대체)
+분석 DW(BigQuery)에 실시간 적재하는 파이프라인입니다. 커넥터는 YAML 로 선언하고, Connect 파드의
+sidecar 가 선언과 실제 상태를 맞추며 장애 태스크를 복구합니다. 두 개의 Kubernetes 클러스터로 이중화합니다.
 
 ```mermaid
 flowchart LR
@@ -148,40 +147,11 @@ kubectl apply -k k8s/overlays/cluster-a
 소스 DB 에는 `binlog_format=ROW`, `binlog_row_image=FULL` 과 Debezium 전용 계정
 (`SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT`)이 필요합니다.
 
-## 발전 과정
-
-운영하면서 두 단계로 구조가 바뀌었고, 공개용으로 정리하며 한 번 더 개선했습니다.
-
-| | v1 | v2 | 이 저장소 |
-|---|---|---|---|
-| 커넥터 정의 | 커넥터마다 복사한 curl 블록 (셸) | YAML 선언 + 공통 기본값 병합 (Python) | 동일 + 공통/클러스터별 파일 병합 |
-| 등록 방식 | 사람이 스크립트 실행 | 파드 `postStart` 에서 1회 `POST` | sidecar 가 주기적으로 비교 후 `PUT` (idempotent) |
-| 설정 변경 반영 | 스크립트 재실행 | 이미지 재빌드 + 파드 재배포 | ConfigMap 수정만 (재시작 없음) |
-| 장애 감지 | 수동 확인 | 커넥터 **개수** 비교 liveness → 파드 재시작 | 태스크 `FAILED` 감지 → 해당 태스크만 재시작 + 알림 |
-| 멀티 클러스터 | 스크립트 수동 수정 | 클러스터별 매니페스트 디렉터리 복제 | kustomize base/overlay |
-| 배포 | 수동 | Bitbucket Pipelines CI/CD | GitHub Actions CI |
-| 인증정보 | 평문 | 평문 (DB, Slack 토큰) | FileConfigProvider + Secret |
-| Connect 이미지 | jar 수십 MB 커밋 | Python 3.8 을 소스 빌드해 Connect 이미지에 포함 | 플러그인은 빌드 시 다운로드, Python 은 별도 sidecar 이미지 |
-
-그 밖에 바로잡은 것:
-
-- v1 일부 설정 키에 zero-width space(U+200B)가 섞여 Connect 가 해당 옵션을 조용히 무시하고 있었음 → 키 정리 + registrar 에서 사전 차단
-- `include.schema.events` 는 Debezium 에 없는 키(정확히는 `include.schema.changes`)라 무시되고 있었음
-- 여러 소스 커넥터가 schema history 토픽 하나를 공유 → 커넥터별 토픽으로 분리
-- Kafka / ZooKeeper 영속 볼륨 없음 → `volumeClaimTemplates` 추가
-- ZooKeeper 기반 Schema Registry 저장소 설정(deprecated) → bootstrap servers 방식
-
 ## 운영 포인트
 
-- **스냅샷 전략**: 대형 테이블이 많은 DB 는 `initial` 스냅샷 부담이 커서 `schema_only` 로 시작해 이후 변경분만 스트리밍했습니다.
+- **스냅샷 전략**: 로컬 샘플은 `initial` 로 기존 데이터까지 적재하고, 클러스터 설정은 `schema_only` 로 시작해 이후 변경분만 스트리밍합니다. 대형 테이블의 과거 데이터는 배치로 적재하는 것을 전제로 합니다.
 - **`server.id`**: 같은 MySQL 에 붙는 커넥터끼리 겹치면 복제 연결을 서로 끊습니다. 이중화 클러스터는 서로 다른 값을 씁니다.
 - **싱크 옵션 호환성**: `insert.mode=upsert` 같은 JDBC 싱크용 옵션은 BigQuery 싱크(1.6)에서 무시됩니다. 그래서 append + 뷰 방식을 사용합니다.
-
-## 개선 여지
-
-- 단일 브로커/단일 ZooKeeper → 3 브로커 + replication factor 3, 또는 Strimzi Operator(`KafkaConnector` CRD 가 registrar 역할을 대체)
-- Debezium 1.4 / BigQuery connector 1.6 → Debezium 2.x(KRaft), BigQuery connector 2.x 의 upsert/delete 지원 검토
-- registrar 에 Prometheus 메트릭 노출
 
 ## License
 
